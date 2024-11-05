@@ -1,5 +1,8 @@
-use generic_array::typenum::{U16, U24, U32};
-use generic_array::GenericArray;
+use cipher::{
+    array::Array,
+    typenum::{U16, U24, U32},
+    KeyInit,
+};
 
 use crate::errors::Result;
 
@@ -7,23 +10,24 @@ use crate::errors::Result;
 /// As defined in RFC 3394.
 pub fn wrap(key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
     ensure_eq!(data.len() % 8, 0, "data must be a multiple of 64bit");
+    let mut buf = vec![0; data.len() + aes_kw::IV_LEN];
 
     let aes_size = key.len() * 8;
     let res = match aes_size {
         128 => {
-            let key = GenericArray::<u8, U16>::from_slice(key);
-            let kek = aes_kw::KekAes128::new(key);
-            kek.wrap_vec(data)?
+            let key = Array::<u8, U16>::try_from(key).expect("Size invariant violation");
+            let kek = aes_kw::KwAes128::new(&key);
+            kek.wrap(data, &mut buf)?.to_vec()
         }
         192 => {
-            let key = GenericArray::<u8, U24>::from_slice(key);
-            let kek = aes_kw::KekAes192::new(key);
-            kek.wrap_vec(data)?
+            let key = Array::<u8, U24>::try_from(key).expect("Size invariant violation");
+            let kek = aes_kw::KwAes192::new(&key);
+            kek.wrap(data, &mut buf)?.to_vec()
         }
         256 => {
-            let key = GenericArray::<u8, U32>::from_slice(key);
-            let kek = aes_kw::KekAes256::new(key);
-            kek.wrap_vec(data)?
+            let key = Array::<u8, U32>::try_from(key).expect("Size invariant violation");
+            let kek = aes_kw::KwAes256::new(&key);
+            kek.wrap(data, &mut buf)?.to_vec()
         }
         _ => bail!("invalid aes key size: {}", aes_size),
     };
@@ -34,27 +38,27 @@ pub fn wrap(key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
 /// As defined in RFC 3394.
 pub fn unwrap(key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
     ensure_eq!(data.len() % 8, 0, "data must be a multiple of 64bit");
+    let mut buf = vec![0; data.len()];
 
     let aes_size = key.len() * 8;
     let res = match aes_size {
         128 => {
-            let key = GenericArray::<u8, U16>::from_slice(key);
-            let kek = aes_kw::KekAes128::new(key);
-            kek.unwrap_vec(data)?
+            let key = Array::<u8, U16>::try_from(key).expect("Size invariant violation");
+            let kek = aes_kw::KwAes128::new(&key);
+            kek.unwrap(data, &mut buf)?.to_vec()
         }
         192 => {
-            let key = GenericArray::<u8, U24>::from_slice(key);
-            let kek = aes_kw::KekAes192::new(key);
-            kek.unwrap_vec(data)?
+            let key = Array::<u8, U24>::try_from(key).expect("Size invariant violation");
+            let kek = aes_kw::KwAes192::new(&key);
+            kek.unwrap(data, &mut buf)?.to_vec()
         }
         256 => {
-            let key = GenericArray::<u8, U32>::from_slice(key);
-            let kek = aes_kw::KekAes256::new(key);
-            kek.unwrap_vec(data)?
+            let key = Array::<u8, U32>::try_from(key).expect("Size invariant violation");
+            let kek = aes_kw::KwAes256::new(&key);
+            kek.unwrap(data, &mut buf)?.to_vec()
         }
         _ => bail!("invalid aes key size: {}", aes_size),
     };
-
     Ok(res)
 }
 

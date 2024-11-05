@@ -129,24 +129,15 @@ impl Decryptor for SecretKey {
 
                 shared_secret.to_bytes().to_vec()
             }
-            SecretKey::P256 { secret, .. } => derive_shared_secret_decryption::<p256::NistP256>(
-                data.public_point,
-                secret,
-                &curve,
-                65,
-            )?,
-            SecretKey::P384 { secret, .. } => derive_shared_secret_decryption::<p384::NistP384>(
-                data.public_point,
-                secret,
-                &curve,
-                97,
-            )?,
-            SecretKey::P521 { secret, .. } => derive_shared_secret_decryption::<p521::NistP521>(
-                data.public_point,
-                secret,
-                &curve,
-                133,
-            )?,
+            SecretKey::P256 { secret, .. } => {
+                derive_shared_secret_decryption::<p256::NistP256>(data.public_point, secret, 65)?
+            }
+            SecretKey::P384 { secret, .. } => {
+                derive_shared_secret_decryption::<p384::NistP384>(data.public_point, secret, 97)?
+            }
+            SecretKey::P521 { secret, .. } => {
+                derive_shared_secret_decryption::<p521::NistP521>(data.public_point, secret, 133)?
+            }
         };
 
         // obtain the session key from the shared secret
@@ -164,7 +155,6 @@ impl Decryptor for SecretKey {
 fn derive_shared_secret_decryption<C>(
     public_point: &Mpi,
     secret: &[u8],
-    curve: &ECCCurve,
     pub_bytes: usize,
 ) -> Result<Vec<u8>>
 where
@@ -173,17 +163,16 @@ where
     elliptic_curve::AffinePoint<C>:
         elliptic_curve::sec1::FromEncodedPoint<C> + elliptic_curve::sec1::ToEncodedPoint<C>,
 {
-    ensure_eq!(
-        secret.len(),
-        curve.secret_key_length(),
-        "invalid secret point"
-    );
     ensure_eq!(public_point.len(), pub_bytes, "invalid public point");
 
     let ephemeral_public_key =
         elliptic_curve::PublicKey::<C>::from_sec1_bytes(public_point.as_bytes())?;
 
-    let our_secret = elliptic_curve::SecretKey::<C>::from_bytes(secret.into())?;
+    let our_secret = elliptic_curve::SecretKey::<C>::from_bytes(
+        secret
+            .try_into()
+            .map_err(|_| Error::Message("invalid secret point".to_string()))?,
+    )?;
 
     // derive shared secret
     let shared_secret = elliptic_curve::ecdh::diffie_hellman(

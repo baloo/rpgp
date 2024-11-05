@@ -2,8 +2,8 @@ use std::hash::Hasher;
 use std::io::Write;
 
 use base64::engine::{general_purpose, Engine as _};
+use cipher::typenum::U64;
 use crc24::Crc24Hasher;
-use generic_array::typenum::U64;
 
 use crate::armor::BlockType;
 use crate::errors::Result;
