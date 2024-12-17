@@ -17,17 +17,17 @@ pub fn wrap(key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
         128 => {
             let key = Array::<u8, U16>::try_from(key).expect("Size invariant violation");
             let kek = aes_kw::KwAes128::new(&key);
-            kek.wrap(data, &mut buf)?.to_vec()
+            kek.wrap_key(data, &mut buf)?.to_vec()
         }
         192 => {
             let key = Array::<u8, U24>::try_from(key).expect("Size invariant violation");
             let kek = aes_kw::KwAes192::new(&key);
-            kek.wrap(data, &mut buf)?.to_vec()
+            kek.wrap_key(data, &mut buf)?.to_vec()
         }
         256 => {
             let key = Array::<u8, U32>::try_from(key).expect("Size invariant violation");
             let kek = aes_kw::KwAes256::new(&key);
-            kek.wrap(data, &mut buf)?.to_vec()
+            kek.wrap_key(data, &mut buf)?.to_vec()
         }
         _ => bail!("invalid aes key size: {}", aes_size),
     };
@@ -45,17 +45,17 @@ pub fn unwrap(key: &[u8], data: &[u8]) -> Result<Vec<u8>> {
         128 => {
             let key = Array::<u8, U16>::try_from(key).expect("Size invariant violation");
             let kek = aes_kw::KwAes128::new(&key);
-            kek.unwrap(data, &mut buf)?.to_vec()
+            kek.unwrap_key(data, &mut buf)?.to_vec()
         }
         192 => {
             let key = Array::<u8, U24>::try_from(key).expect("Size invariant violation");
             let kek = aes_kw::KwAes192::new(&key);
-            kek.unwrap(data, &mut buf)?.to_vec()
+            kek.unwrap_key(data, &mut buf)?.to_vec()
         }
         256 => {
             let key = Array::<u8, U32>::try_from(key).expect("Size invariant violation");
             let kek = aes_kw::KwAes256::new(&key);
-            kek.unwrap(data, &mut buf)?.to_vec()
+            kek.unwrap_key(data, &mut buf)?.to_vec()
         }
         _ => bail!("invalid aes key size: {}", aes_size),
     };
