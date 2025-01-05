@@ -38,7 +38,7 @@ impl PgpPublicKey for RsaPublicKey {
 /// [`signature::Signer`] backed signer for PGP.
 pub struct RsaSigner<T, D> {
     inner: T,
-    public_key: PublicKey,
+    pub public_key: PublicKey,
     _digest: PhantomData<D>,
 }
 
