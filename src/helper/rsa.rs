@@ -1,44 +1,27 @@
 use std::{fmt, marker::PhantomData};
 
-use chrono::{DateTime, Utc};
 use digest::{typenum::Unsigned, OutputSizeUser};
 use rand::{CryptoRng, Rng};
-use rsa::{
-    pkcs1v15::{Signature, VerifyingKey},
-    traits::PublicKeyParts,
-    RsaPublicKey,
-};
+use rsa::pkcs1v15::Signature;
 use sha2::Digest;
 use signature::{hazmat::PrehashSigner, Keypair, SignatureEncoding};
+
+use super::PgpHash;
 
 use crate::{
     bail,
     crypto::{hash::HashAlgorithm, public_key::PublicKeyAlgorithm},
     errors::Result,
-    packet::PublicKey,
     types::{
         EskType, Fingerprint, KeyId, KeyVersion, Mpi, PkeskBytes, PublicKeyTrait, PublicParams,
-        SecretKeyTrait, SignatureBytes, Version,
+        SecretKeyTrait, SignatureBytes,
     },
 };
 
-use super::{PgpHash, PgpPublicKey};
-
-impl PgpPublicKey for RsaPublicKey {
-    const PGP_ALGORITHM: PublicKeyAlgorithm = PublicKeyAlgorithm::RSA;
-
-    fn pgp_parameters(&self) -> PublicParams {
-        PublicParams::RSA {
-            n: self.n().into(),
-            e: self.e().into(),
-        }
-    }
-}
-
 /// [`signature::Signer`] backed signer for PGP.
+#[derive(Clone)]
 pub struct RsaSigner<T, D> {
     inner: T,
-    pub public_key: PublicKey,
     _digest: PhantomData<D>,
 }
 
@@ -51,24 +34,13 @@ impl<D, T> fmt::Debug for RsaSigner<T, D> {
 impl<T, D> RsaSigner<T, D>
 where
     D: Digest,
-    T: Keypair<VerifyingKey = VerifyingKey<D>>,
 {
     /// Create a new signer with a given public key
-    pub fn new(inner: T, created_at: DateTime<Utc>) -> Result<Self> {
-        let public_key = PublicKey::new(
-            Version::New,
-            KeyVersion::V4,
-            RsaPublicKey::PGP_ALGORITHM,
-            created_at,
-            None,
-            inner.verifying_key().as_ref().pgp_parameters(),
-        )?;
-
-        Ok(Self {
+    pub fn new(inner: T) -> Self {
+        Self {
             inner,
-            public_key,
             _digest: PhantomData,
-        })
+        }
     }
 }
 
@@ -113,10 +85,10 @@ where
 
 impl<D, T> SecretKeyTrait for RsaSigner<T, D>
 where
-    T: PrehashSigner<Signature>,
+    T: PrehashSigner<Signature> + PublicKeyTrait,
     D: Digest + PgpHash,
 {
-    type PublicKey = PublicKey;
+    type PublicKey = ();
     type Unlocked = Self;
 
     fn unlock<F, G, Tr>(&self, _pw: F, work: G) -> Result<Tr>
@@ -148,67 +120,60 @@ where
         Ok(SignatureBytes::Mpis(mpis))
     }
 
-    fn public_key(&self) -> Self::PublicKey {
-        self.public_key.clone()
-    }
-
-    fn hash_alg(&self) -> HashAlgorithm {
-        D::HASH_ALGORITHM
-    }
+    fn public_key(&self) -> Self::PublicKey {}
 }
 
-impl<D, T> PublicKeyTrait for RsaSigner<T, D> {
+impl<T, D> PublicKeyTrait for RsaSigner<T, D>
+where
+    T: PublicKeyTrait,
+{
+    fn version(&self) -> KeyVersion {
+        self.inner.version()
+    }
+
+    fn fingerprint(&self) -> Fingerprint {
+        self.inner.fingerprint()
+    }
+
+    fn key_id(&self) -> KeyId {
+        self.inner.key_id()
+    }
+
+    fn algorithm(&self) -> PublicKeyAlgorithm {
+        self.inner.algorithm()
+    }
+
+    fn created_at(&self) -> &chrono::DateTime<chrono::Utc> {
+        self.inner.created_at()
+    }
+
+    fn expiration(&self) -> Option<u16> {
+        self.inner.expiration()
+    }
+
     fn verify_signature(
         &self,
         hash: HashAlgorithm,
         data: &[u8],
         sig: &SignatureBytes,
     ) -> Result<()> {
-        self.public_key.verify_signature(hash, data, sig)
+        self.inner.verify_signature(hash, data, sig)
     }
 
     fn encrypt<R: CryptoRng + Rng>(
         &self,
-        _rng: R,
-        _plain: &[u8],
-        _esk_type: EskType,
+        rng: R,
+        plain: &[u8],
+        typ: EskType,
     ) -> Result<PkeskBytes> {
-        bail!("Encryption is unsupported")
+        self.inner.encrypt(rng, plain, typ)
     }
 
     fn serialize_for_hashing(&self, writer: &mut impl std::io::Write) -> Result<()> {
-        self.public_key.serialize_for_hashing(writer)
-    }
-
-    fn version(&self) -> KeyVersion {
-        self.public_key.version()
-    }
-
-    fn fingerprint(&self) -> Fingerprint {
-        self.public_key.fingerprint()
-    }
-
-    fn key_id(&self) -> KeyId {
-        self.public_key.key_id()
-    }
-
-    fn algorithm(&self) -> PublicKeyAlgorithm {
-        self.public_key.algorithm()
-    }
-
-    fn created_at(&self) -> &chrono::DateTime<chrono::Utc> {
-        self.public_key.created_at()
-    }
-
-    fn expiration(&self) -> Option<u16> {
-        self.public_key.expiration()
+        self.inner.serialize_for_hashing(writer)
     }
 
     fn public_params(&self) -> &PublicParams {
-        self.public_key.public_params()
-    }
-
-    fn is_encryption_key(&self) -> bool {
-        false
+        self.inner.public_params()
     }
 }
