@@ -1,7 +1,7 @@
 use cx448::x448;
 use hkdf::Hkdf;
 use log::debug;
-use rand::{CryptoRng, Rng};
+use rand::rand_core::{CryptoRng, RngCore};
 use sha2::Sha512;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
@@ -29,7 +29,7 @@ impl From<&SecretKey> for X448PublicParams {
 
 impl SecretKey {
     /// Generate an X448 `SecretKey`.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R) -> Self {
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R) -> Self {
         let mut secret_key_bytes = Zeroizing::new([0u8; 56]);
         rng.fill_bytes(&mut *secret_key_bytes);
         let secret = x448::Secret::from(*secret_key_bytes); // does clamping
@@ -140,8 +140,8 @@ pub fn hkdf(
 /// X448 encryption.
 ///
 /// Returns (ephemeral, encrypted session key)
-pub fn encrypt<R: CryptoRng + Rng>(
-    mut rng: R,
+pub fn encrypt<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     recipient_public: &X448PublicParams,
     plain: &[u8],
 ) -> Result<([u8; 56], Vec<u8>)> {

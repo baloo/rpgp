@@ -5,7 +5,7 @@ use ml_kem::{
     kem::{Decapsulate, DecapsulationKey, Encapsulate, EncapsulationKey},
     KemCore, MlKem768, MlKem768Params,
 };
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 use sha3::{Digest, Sha3_256};
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{ZeroizeOnDrop, Zeroizing};
@@ -63,7 +63,7 @@ impl Serialize for SecretKey {
 
 impl SecretKey {
     /// Generate a `SecretKey`.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R) -> Self {
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R) -> Self {
         let mut secret_key_bytes = Zeroizing::new([0u8; 32]);
         rng.fill_bytes(&mut *secret_key_bytes);
         let x25519 = StaticSecret::from(*secret_key_bytes);
@@ -202,8 +202,8 @@ fn multi_key_combine(
 /// - ecdh_ciphertext
 /// - ml_kem_ciphertext
 /// - encrypted data
-pub fn encrypt<R: CryptoRng + Rng>(
-    mut rng: R,
+pub fn encrypt<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     ecdh_public_key: &x25519_dalek::PublicKey,
     ml_kem_public_key: &EncapsulationKey<MlKem768Params>,
     plain: &[u8],
@@ -238,8 +238,8 @@ pub fn encrypt<R: CryptoRng + Rng>(
 }
 
 /// <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-08.html#name-x25519-kem>
-fn x25519_kem_encaps<R: CryptoRng + Rng>(
-    mut rng: R,
+fn x25519_kem_encaps<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     public_key: &x25519_dalek::PublicKey,
 ) -> ([u8; 32], [u8; 32]) {
     // Generate an ephemeral key pair {v, V} via V = X25519(v,U(P)) where v is a randomly generated octet string with a length of 32 octets
@@ -254,8 +254,8 @@ fn x25519_kem_encaps<R: CryptoRng + Rng>(
     (ephemeral_public.to_bytes(), shared_secret.to_bytes())
 }
 
-fn ml_kem_encaps<R: CryptoRng + Rng>(
-    mut rng: R,
+fn ml_kem_encaps<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     public_key: &EncapsulationKey<MlKem768Params>,
 ) -> (Box<[u8; 1088]>, [u8; 32]) {
     let (ciphertext, share) = public_key.encapsulate(&mut rng).expect("infallible");

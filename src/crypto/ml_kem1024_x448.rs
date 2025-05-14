@@ -6,7 +6,7 @@ use ml_kem::{
     kem::{Decapsulate, DecapsulationKey, Encapsulate, EncapsulationKey},
     KemCore, MlKem1024, MlKem1024Params,
 };
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 use sha3::{Digest, Sha3_256};
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
@@ -63,7 +63,7 @@ impl Serialize for SecretKey {
 
 impl SecretKey {
     /// Generate a `SecretKey`.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R) -> Self {
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R) -> Self {
         let x448 = Secret::new(&mut rng);
 
         let mut d = Zeroizing::new([0u8; 32]);
@@ -199,8 +199,8 @@ fn multi_key_combine(
 /// - ecdh_ciphertext
 /// - ml_kem_ciphertext
 /// - encrypted data
-pub fn encrypt<R: CryptoRng + Rng>(
-    mut rng: R,
+pub fn encrypt<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     ecdh_public_key: &PublicKey,
     ml_kem_public_key: &EncapsulationKey<MlKem1024Params>,
     plain: &[u8],
@@ -235,8 +235,8 @@ pub fn encrypt<R: CryptoRng + Rng>(
 }
 
 /// <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-08.html#name-x448-kem>
-fn x448_kem_encaps<R: CryptoRng + Rng>(
-    mut rng: R,
+fn x448_kem_encaps<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     public_key: &PublicKey,
 ) -> (PublicKey, [u8; 56]) {
     // Generate an ephemeral key pair {v, V} via V = X448(v,U(P)) where v is a randomly generated octet string with a length of 56 octets
@@ -249,8 +249,8 @@ fn x448_kem_encaps<R: CryptoRng + Rng>(
     (ephemeral_public, *shared_secret.as_bytes())
 }
 
-fn ml_kem_encaps<R: CryptoRng + Rng>(
-    mut rng: R,
+fn ml_kem_encaps<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     public_key: &EncapsulationKey<MlKem1024Params>,
 ) -> (Box<[u8; 1568]>, [u8; 32]) {
     let (ciphertext, share) = public_key.encapsulate(&mut rng).expect("infallible");

@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use digest::{const_oid::AssociatedOid, Digest};
 use md5::Md5;
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 use ripemd::Ripemd160;
 use rsa::{
     pkcs1v15::{Pkcs1v15Encrypt, Signature as RsaSignature, SigningKey, VerifyingKey},
@@ -39,8 +39,8 @@ impl SecretKey {
     /// Generate an RSA `SecretKey`.
     ///
     /// Errors on unsupported `bit_size`s.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R, bit_size: usize) -> Result<Self> {
-        let key = RsaPrivateKey::new(&mut rng, bit_size)?;
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R, bit_size: usize) -> Result<Self> {
+        let key = RsaPrivateKey::new(rng, bit_size)?;
 
         Ok(SecretKey(key))
     }
@@ -52,8 +52,10 @@ impl SecretKey {
         q: Mpi,
         _u: Mpi,
     ) -> Result<Self> {
+        let n = pub_params.key.n().clone();
+        let n = dsa::Odd::new(n.get()).unwrap();
         let secret_key = RsaPrivateKey::from_components(
-            pub_params.key.n().clone(),
+            n,
             pub_params.key.e().clone(),
             d.into(),
             vec![p.into(), q.into()],
@@ -118,12 +120,12 @@ impl From<RsaPrivateKey> for SecretKey {
 }
 
 /// RSA encryption using PKCS1v15 padding.
-pub fn encrypt<R: CryptoRng + Rng>(
-    mut rng: R,
+pub fn encrypt<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     key: &RsaPublicKey,
     plaintext: &[u8],
 ) -> Result<PkeskBytes> {
-    let data = key.encrypt(&mut rng, Pkcs1v15Encrypt, plaintext)?;
+    let data = key.encrypt(rng, Pkcs1v15Encrypt, plaintext)?;
 
     Ok(PkeskBytes::Rsa {
         mpi: Mpi::from_slice(&data[..]),

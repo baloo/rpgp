@@ -8,7 +8,6 @@ use byteorder::{BigEndian, ByteOrder};
 use bytes::{BufMut, Bytes, BytesMut};
 use hkdf::Hkdf;
 use log::debug;
-use num_bigint::ModInverse;
 use sha2::Sha256;
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
@@ -678,12 +677,7 @@ impl PlainSecretParams {
                 let d = key.d();
                 let p = &key.primes()[0];
                 let q = &key.primes()[1];
-                let u = p
-                    .clone()
-                    .mod_inverse(q)
-                    .expect("invalid prime")
-                    .to_biguint()
-                    .expect("invalid prime");
+                let u = p.clone().invert_mod(q).expect("invalid prime");
 
                 Mpi::from(d).to_writer(writer)?;
                 Mpi::from(p).to_writer(writer)?;
@@ -770,12 +764,7 @@ impl PlainSecretParams {
                 let d = key.d();
                 let p = &key.primes()[0];
                 let q = &key.primes()[1];
-                let u = p
-                    .clone()
-                    .mod_inverse(q)
-                    .expect("invalid prime")
-                    .to_biguint()
-                    .expect("invalid prime");
+                let u = p.clone().invert_mod(q).expect("invalid prime");
 
                 let mut sum = 0;
                 sum += Mpi::from(d).write_len();

@@ -1,5 +1,5 @@
 use ml_dsa::{KeyGen, MlDsa87};
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 use signature::{Signer as _, Verifier};
 use zeroize::ZeroizeOnDrop;
 
@@ -39,7 +39,7 @@ impl From<&SecretKey> for MlDsa87Ed448PublicParams {
 
 impl SecretKey {
     /// Generate an Ed448 `SecretKey`.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R) -> Self {
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R) -> Self {
         let ed448 = cx448::SigningKey::generate(&mut rng);
         let mut ml_dsa_seed = [0u8; 32];
         rng.fill_bytes(&mut ml_dsa_seed);

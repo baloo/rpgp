@@ -1,7 +1,7 @@
 use std::io::BufRead;
 
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
-use digest::generic_array::GenericArray;
+use hybrid_array::Array;
 use md5::Md5;
 use rand::{CryptoRng, Rng};
 use rsa::traits::PublicKeyParts;
@@ -93,7 +93,7 @@ impl PublicKey {
 
     pub fn sign<R: CryptoRng + Rng, K>(
         &self,
-        rng: R,
+        rng: &mut R,
         key: &K,
         key_pw: &Password,
     ) -> Result<Signature>
@@ -103,9 +103,9 @@ impl PublicKey {
         self.inner.sign(rng, key, key_pw, SignatureType::KeyBinding)
     }
 
-    pub fn encrypt<R: rand::CryptoRng + rand::Rng>(
+    pub fn encrypt<R: rand::CryptoRng + ?Sized>(
         &self,
-        rng: R,
+        rng: &mut R,
         plain: &[u8],
         typ: EskType,
     ) -> Result<PkeskBytes> {
@@ -167,9 +167,9 @@ impl PublicSubkey {
         })
     }
 
-    pub fn sign<R: CryptoRng + Rng, K>(
+    pub fn sign<R: CryptoRng + ?Sized, K>(
         &self,
-        rng: R,
+        rng: &mut R,
         key: &K,
         key_pw: &Password,
     ) -> Result<Signature>
@@ -180,9 +180,9 @@ impl PublicSubkey {
             .sign(rng, key, key_pw, SignatureType::SubkeyBinding)
     }
 
-    pub fn encrypt<R: rand::CryptoRng + rand::Rng>(
+    pub fn encrypt<R: rand::CryptoRng + ?Sized>(
         &self,
-        rng: R,
+        rng: &mut R,
         plain: &[u8],
         typ: EskType,
     ) -> Result<PkeskBytes> {
@@ -396,9 +396,9 @@ impl PubKeyInner {
     }
 }
 
-pub(crate) fn encrypt<R: rand::CryptoRng + rand::Rng, K: PublicKeyTrait>(
+pub(crate) fn encrypt<R: rand::CryptoRng + ?Sized, K: PublicKeyTrait>(
     key: &K,
-    mut rng: R,
+    rng: &mut R,
     plain: &[u8],
     typ: EskType,
 ) -> Result<PkeskBytes> {
@@ -448,7 +448,7 @@ pub(crate) fn encrypt<R: rand::CryptoRng + rand::Rng, K: PublicKeyTrait>(
                 }
             };
 
-            let (ephemeral, session_key) = crypto::x25519::encrypt(&mut rng, &params.key, plain)?;
+            let (ephemeral, session_key) = crypto::x25519::encrypt(rng, &params.key, plain)?;
 
             Ok(PkeskBytes::X25519 {
                 ephemeral,
@@ -469,7 +469,7 @@ pub(crate) fn encrypt<R: rand::CryptoRng + rand::Rng, K: PublicKeyTrait>(
                 }
             };
 
-            let (ephemeral, session_key) = crypto::x448::encrypt(&mut rng, params, plain)?;
+            let (ephemeral, session_key) = crypto::x448::encrypt(rng, params, plain)?;
 
             Ok(PkeskBytes::X448 {
                 ephemeral,
@@ -622,7 +622,7 @@ impl crate::packet::PacketTrait for PublicSubkey {
 }
 
 impl PubKeyInner {
-    fn imprint<D: KnownDigest>(&self) -> Result<GenericArray<u8, D::OutputSize>> {
+    fn imprint<D: KnownDigest>(&self) -> Result<Array<u8, D::OutputSize>> {
         let mut hasher = D::new();
 
         use crate::ser::Serialize;
@@ -882,7 +882,12 @@ impl PublicKeyTrait for PubKeyInner {
                 let sig: &[Mpi] = sig.try_into()?;
                 ensure_eq!(sig.len(), 2, "invalid signature");
 
-                crypto::dsa::verify(params, hashed, sig[0].clone().into(), sig[1].clone().into())
+                crypto::dsa::verify(
+                    params,
+                    hashed,
+                    sig[0].clone().try_into().expect("invariant violation"),
+                    sig[1].clone().try_into().expect("invariant violation"),
+                )
             }
             PublicParams::Unknown { .. } => {
                 unimplemented_err!("PublicParams::Unknown can not be used for verify operations");
@@ -922,7 +927,7 @@ impl KeyDetails for PublicKey {
 }
 
 impl Imprint for PublicKey {
-    fn imprint<D: KnownDigest>(&self) -> Result<GenericArray<u8, D::OutputSize>> {
+    fn imprint<D: KnownDigest>(&self) -> Result<Array<u8, D::OutputSize>> {
         self.inner.imprint::<D>()
     }
 }
@@ -969,7 +974,7 @@ impl KeyDetails for PublicSubkey {
 }
 
 impl Imprint for PublicSubkey {
-    fn imprint<D: KnownDigest>(&self) -> Result<GenericArray<u8, D::OutputSize>> {
+    fn imprint<D: KnownDigest>(&self) -> Result<Array<u8, D::OutputSize>> {
         self.inner.imprint::<D>()
     }
 }
