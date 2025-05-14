@@ -40,7 +40,9 @@ impl SecretKey {
     }
 
     pub fn try_from_bytes(raw: [u8; KEY_LEN]) -> Result<Self> {
-        let secret = ed448::SigningKey::from(ed448::ScalarBytes::from_slice(&raw));
+        let secret = ed448::SigningKey::from(
+            ed448::ScalarBytes::try_from(&raw[..]).expect("invariant violated"),
+        );
         Ok(Self { secret })
     }
 
@@ -115,7 +117,7 @@ mod tests {
 
     prop_compose! {
         pub fn key_gen()(bytes: [u8; 57]) -> ed448::SigningKey {
-            ed448::SigningKey::from(ed448::ScalarBytes::from_slice(&bytes))
+            ed448::SigningKey::from(ed448::ScalarBytes::try_from(&bytes[..]).expect("invariant violation"))
         }
     }
 }

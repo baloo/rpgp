@@ -40,7 +40,7 @@ mod tests {
 
     proptest::prop_compose! {
         pub fn ed448_pub_gen()(bytes: [u8; 57]) -> ed448::VerifyingKey {
-            let secret = ed448::SigningKey::from(ed448::ScalarBytes::clone_from_slice(&bytes));
+            let secret = ed448::SigningKey::from(ed448::ScalarBytes::try_from(&bytes[..]).expect("invariant violation"));
             secret.verifying_key()
         }
     }
