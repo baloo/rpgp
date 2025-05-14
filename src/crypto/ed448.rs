@@ -36,7 +36,7 @@ impl SecretKey {
     }
 
     pub(crate) fn try_from_bytes(raw_secret: [u8; 57]) -> Result<Self> {
-        let secret = cx448::SigningKey::from(cx448::SecretKey::from_slice(&raw_secret));
+        let secret = cx448::SigningKey::from(cx448::SecretKey::from(raw_secret));
         Ok(Self { secret })
     }
 }
