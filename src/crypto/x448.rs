@@ -1,7 +1,7 @@
-use cx448::x448;
+use ed448_goldilocks::x448;
 use hkdf::Hkdf;
 use log::debug;
-use rand::{CryptoRng, Rng};
+use rand::rand_core::{CryptoRng, RngCore};
 use sha2::Sha512;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
@@ -39,8 +39,8 @@ impl From<&SecretKey> for X448PublicParams {
 
 impl SecretKey {
     /// Generate an X448 `SecretKey`.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R) -> Self {
-        let secret = x448::Secret::new(&mut rng);
+    pub fn generate<R: CryptoRng + ?Sized>(rng: &mut R) -> Self {
+        let secret = x448::Secret::new(rng);
 
         SecretKey { secret }
     }
@@ -164,8 +164,8 @@ pub fn hkdf(
 /// X448 encryption.
 ///
 /// Returns (ephemeral, encrypted session key)
-pub fn encrypt<R: CryptoRng + Rng>(
-    mut rng: R,
+pub fn encrypt<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     recipient_public: &X448PublicParams,
     plain: &[u8],
 ) -> Result<([u8; 56], Vec<u8>)> {
