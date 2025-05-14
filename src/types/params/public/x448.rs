@@ -1,6 +1,6 @@
 use std::io::{self, BufRead};
 
-use cx448::x448;
+use ed448_goldilocks::x448;
 
 use crate::{
     errors::{format_err, Result},
