@@ -133,7 +133,7 @@ pub enum Error {
         backtrace: Option<Backtrace>,
     },
     #[snafu(transparent)]
-    SigningError { source: cx448::SigningError },
+    SigningError { source: ed448::SigningError },
 }
 
 impl From<crate::crypto::hash::Error> for Error {
