@@ -1,4 +1,4 @@
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 use zeroize::ZeroizeOnDrop;
 
 use crate::{
@@ -29,14 +29,14 @@ impl From<&SecretKey> for Ed448PublicParams {
 
 impl SecretKey {
     /// Generate an Ed448 `SecretKey`.
-    pub fn generate<R: Rng + CryptoRng>(rng: R) -> Self {
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R) -> Self {
         let secret = cx448::SigningKey::generate(rng);
 
         SecretKey { secret }
     }
 
     pub(crate) fn try_from_bytes(raw_secret: [u8; 57]) -> Result<Self> {
-        let secret = cx448::SigningKey::from(cx448::SecretKey::from_slice(&raw_secret));
+        let secret = cx448::SigningKey::from(cx448::SecretKey::from(raw_secret));
         Ok(Self { secret })
     }
 }

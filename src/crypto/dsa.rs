@@ -1,9 +1,8 @@
 use std::ops::Deref;
 
 pub use dsa::KeySize;
-use dsa::{Components, Signature, SigningKey};
-use num_bigint::BigUint;
-use rand::{CryptoRng, Rng};
+use dsa::{BoxedUint, Components, Signature, SigningKey};
+use rand::{CryptoRng, RngCore};
 use signature::hazmat::PrehashVerifier;
 use zeroize::Zeroize;
 
@@ -56,14 +55,14 @@ impl Eq for SecretKey {}
 
 impl SecretKey {
     pub(crate) fn try_from_mpi(pub_params: &DsaPublicParams, x: Mpi) -> Result<Self> {
-        let secret = dsa::SigningKey::from_components(pub_params.key.clone(), x.into())?;
+        let secret = dsa::SigningKey::from_components(pub_params.key.clone(), x.try_into()?)?;
         Ok(Self { key: secret })
     }
 
     /// Generate a DSA `SecretKey`.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R, key_size: KeySize) -> Self {
-        let components = Components::generate(&mut rng, key_size);
-        let signing_key = SigningKey::generate(&mut rng, components);
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R, key_size: KeySize) -> Self {
+        let components = Components::generate(rng, key_size);
+        let signing_key = SigningKey::generate(rng, components);
 
         SecretKey { key: signing_key }
     }
@@ -99,9 +98,14 @@ impl Signer for SecretKey {
 }
 
 /// Verify a DSA signature.
-pub fn verify(params: &DsaPublicParams, hashed: &[u8], r: BigUint, s: BigUint) -> Result<()> {
+pub fn verify(
+    params: &DsaPublicParams,
+    hashed: &[u8],
+    r: dsa::NonZero<BoxedUint>,
+    s: dsa::NonZero<BoxedUint>,
+) -> Result<()> {
     let verifying_key = &params.key;
-    let signature = Signature::from_components(r, s)?;
+    let signature = Signature::from_components(r, s);
     verifying_key.verify_prehash(hashed, &signature)?;
 
     Ok(())
@@ -116,8 +120,8 @@ mod tests {
     use super::*;
     use crate::types::Mpi;
 
-    fn hex_num(s: &str) -> BigUint {
-        BigUint::from_str_radix(s, 16).expect("invalid hex")
+    fn hex_num(s: &str) -> BoxedUint {
+        BoxedUint::from_str_radix_vartime(s, 16).expect("invalid hex")
     }
 
     fn hash(hash_algorithm: HashAlgorithm, text: &str) -> Vec<u8> {
@@ -160,22 +164,35 @@ mod tests {
             DsaPublicParams::try_from_mpi(Mpi::from(p), Mpi::from(q), Mpi::from(g), Mpi::from(y))
                 .unwrap();
 
-        let check =
-            |hash_algorithm: HashAlgorithm, text: &str, _k: BigUint, r: BigUint, s: BigUint| {
-                let hashed = hash(hash_algorithm, text);
-                let key = dsa::SigningKey::from_components(params.key.clone(), x.clone()).unwrap();
-                let key = SecretKey { key };
+        let check = |hash_algorithm: HashAlgorithm,
+                     text: &str,
+                     _k: BoxedUint,
+                     r: BoxedUint,
+                     s: BoxedUint| {
+            let hashed = hash(hash_algorithm, text);
+            let key = dsa::SigningKey::from_components(
+                params.key.clone(),
+                dsa::NonZero::new(x.clone()).unwrap(),
+            )
+            .unwrap();
+            let key = SecretKey { key };
 
-                let SignatureBytes::Mpis(res) =
-                    key.sign(hash_algorithm, &hashed).expect("failed to sign")
-                else {
-                    panic!("invalid sig format");
-                };
-                let new_r = res[0].clone();
-                let new_s = res[1].clone();
-                assert_eq!((new_r, new_s), (r.clone().into(), s.clone().into()));
-                verify(&params, &hashed, r, s).expect("failed to verify");
+            let SignatureBytes::Mpis(res) =
+                key.sign(hash_algorithm, &hashed).expect("failed to sign")
+            else {
+                panic!("invalid sig format");
             };
+            let new_r = res[0].clone();
+            let new_s = res[1].clone();
+            assert_eq!((new_r, new_s), (r.clone().into(), s.clone().into()));
+            verify(
+                &params,
+                &hashed,
+                dsa::NonZero::new(r).unwrap(),
+                dsa::NonZero::new(s).unwrap(),
+            )
+            .expect("failed to verify");
+        };
 
         check(
             HashAlgorithm::Sha1,
@@ -295,22 +312,35 @@ mod tests {
             DsaPublicParams::try_from_mpi(Mpi::from(p), Mpi::from(q), Mpi::from(g), Mpi::from(y))
                 .unwrap();
 
-        let check =
-            |hash_algorithm: HashAlgorithm, text: &str, _k: BigUint, r: BigUint, s: BigUint| {
-                let hashed = hash(hash_algorithm, text);
-                let key = dsa::SigningKey::from_components(params.key.clone(), x.clone()).unwrap();
-                let key = SecretKey { key };
+        let check = |hash_algorithm: HashAlgorithm,
+                     text: &str,
+                     _k: BoxedUint,
+                     r: BoxedUint,
+                     s: BoxedUint| {
+            let hashed = hash(hash_algorithm, text);
+            let key = dsa::SigningKey::from_components(
+                params.key.clone(),
+                dsa::NonZero::new(x.clone()).unwrap(),
+            )
+            .unwrap();
+            let key = SecretKey { key };
 
-                let SignatureBytes::Mpis(res) =
-                    key.sign(hash_algorithm, &hashed).expect("failed to sign")
-                else {
-                    panic!("invalid sig format");
-                };
-                let new_r = res[0].clone();
-                let new_s = res[1].clone();
-                assert_eq!((new_r, new_s), (r.clone().into(), s.clone().into()));
-                verify(&params, &hashed, r, s).expect("failed to verify");
+            let SignatureBytes::Mpis(res) =
+                key.sign(hash_algorithm, &hashed).expect("failed to sign")
+            else {
+                panic!("invalid sig format");
             };
+            let new_r = res[0].clone();
+            let new_s = res[1].clone();
+            assert_eq!((new_r, new_s), (r.clone().into(), s.clone().into()));
+            verify(
+                &params,
+                &hashed,
+                dsa::NonZero::new(r).unwrap(),
+                dsa::NonZero::new(s).unwrap(),
+            )
+            .expect("failed to verify");
+        };
 
         check(
             HashAlgorithm::Sha1,

@@ -1,6 +1,6 @@
 use aes_gcm::aead::rand_core::CryptoRng;
 use chrono::SubsecRound;
-use rand::Rng;
+use rand::RngCore;
 
 use crate::{
     composed::{KeyDetails, PublicSubkey, SignedSecretKey, SignedSecretSubKey},
@@ -42,23 +42,23 @@ impl SecretKey {
         }
     }
 
-    pub fn sign<R>(self, mut rng: R, key_pw: &Password) -> Result<SignedSecretKey>
+    pub fn sign<R>(self, rng: &mut R, key_pw: &Password) -> Result<SignedSecretKey>
     where
-        R: CryptoRng + Rng,
+        R: CryptoRng + RngCore + ?Sized,
     {
         let primary_key = self.primary_key;
-        let details =
-            self.details
-                .sign(&mut rng, &primary_key, primary_key.public_key(), key_pw)?;
+        let details = self
+            .details
+            .sign(rng, &primary_key, primary_key.public_key(), key_pw)?;
         let public_subkeys = self
             .public_subkeys
             .into_iter()
-            .map(|k| k.sign(&mut rng, &primary_key, primary_key.public_key(), key_pw))
+            .map(|k| k.sign(rng, &primary_key, primary_key.public_key(), key_pw))
             .collect::<Result<Vec<_>>>()?;
         let secret_subkeys = self
             .secret_subkeys
             .into_iter()
-            .map(|k| k.sign(&mut rng, &primary_key, primary_key.public_key(), key_pw))
+            .map(|k| k.sign(rng, &primary_key, primary_key.public_key(), key_pw))
             .collect::<Result<Vec<_>>>()?;
 
         Ok(SignedSecretKey {
@@ -77,13 +77,13 @@ impl SecretSubkey {
 
     pub fn sign<R, K, P>(
         self,
-        mut rng: R,
+        rng: &mut R,
         sec_key: &K,
         pub_key: &P,
         key_pw: &Password,
     ) -> Result<SignedSecretSubKey>
     where
-        R: CryptoRng + Rng,
+        R: CryptoRng + RngCore + ?Sized,
         K: SecretKeyTrait,
         P: PublicKeyTrait + Serialize,
     {
@@ -96,7 +96,7 @@ impl SecretSubkey {
                 sec_key.hash_alg(),
             ),
             KeyVersion::V6 => SignatureConfig::v6(
-                &mut rng,
+                rng,
                 SignatureType::SubkeyBinding,
                 sec_key.algorithm(),
                 sec_key.hash_alg(),

@@ -2,7 +2,7 @@ use std::{io, io::BufRead, str};
 
 use bytes::Bytes;
 use chrono::{SubsecRound, Utc};
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 
 use crate::{
     errors::{unsupported_err, Result},
@@ -76,13 +76,13 @@ impl UserId {
     /// Create a self-signature.
     pub fn sign<R, K, P>(
         &self,
-        rng: R,
+        rng: &mut R,
         signer_sec_key: &K,
         signer_pub_key: &P,
         key_pw: &Password,
     ) -> Result<SignedUser>
     where
-        R: CryptoRng + Rng,
+        R: CryptoRng + RngCore + ?Sized,
         K: SecretKeyTrait,
         P: PublicKeyTrait + Serialize,
     {
@@ -92,13 +92,13 @@ impl UserId {
     /// Create a third-party signature.
     pub fn sign_third_party<R, P, K>(
         &self,
-        mut rng: R,
+        rng: &mut R,
         signer: &P,
         signer_pw: &Password,
         signee: &K,
     ) -> Result<SignedUser>
     where
-        R: CryptoRng + Rng,
+        R: CryptoRng + RngCore + ?Sized,
         P: SecretKeyTrait,
         K: PublicKeyTrait + Serialize,
     {
@@ -113,7 +113,7 @@ impl UserId {
                 signer.hash_alg(),
             ),
             KeyVersion::V6 => SignatureConfig::v6(
-                &mut rng,
+                rng,
                 SignatureType::CertGeneric,
                 signer.algorithm(),
                 signer.hash_alg(),

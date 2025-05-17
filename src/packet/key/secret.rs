@@ -1,8 +1,8 @@
 use std::io::BufRead;
 
-use generic_array::GenericArray;
+use hybrid_array::Array;
 use log::debug;
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 
 use super::public::{encrypt, PubKeyInner};
 use crate::{
@@ -88,9 +88,9 @@ impl SecretKey {
         self.secret_params.has_sha1_checksum()
     }
 
-    pub fn sign<R: CryptoRng + Rng, K, P>(
+    pub fn sign<R: CryptoRng + RngCore + ?Sized, K, P>(
         &self,
-        rng: R,
+        rng: &mut R,
         key: &K,
         pub_key: &P,
         key_pw: &Password,
@@ -167,9 +167,9 @@ impl SecretSubkey {
         self.secret_params.has_sha1_checksum()
     }
 
-    pub fn sign<R: CryptoRng + Rng, K, P>(
+    pub fn sign<R: CryptoRng + RngCore + ?Sized, K, P>(
         &self,
-        rng: R,
+        rng: &mut R,
         key: &K,
         pub_key: &P,
         key_pw: &Password,
@@ -239,7 +239,7 @@ impl KeyDetails for SecretKey {
 }
 
 impl Imprint for SecretKey {
-    fn imprint<D: KnownDigest>(&self) -> Result<GenericArray<u8, D::OutputSize>> {
+    fn imprint<D: KnownDigest>(&self) -> Result<Array<u8, D::OutputSize>> {
         self.details.imprint::<D>()
     }
 }
@@ -261,7 +261,7 @@ impl KeyDetails for SecretSubkey {
 }
 
 impl Imprint for SecretSubkey {
-    fn imprint<D: KnownDigest>(&self) -> Result<GenericArray<u8, D::OutputSize>> {
+    fn imprint<D: KnownDigest>(&self) -> Result<Array<u8, D::OutputSize>> {
         self.details.imprint::<D>()
     }
 }
@@ -356,9 +356,9 @@ impl SecretKey {
     ///
     /// To change the password on a locked Secret Key packet, it needs to be unlocked
     /// using [Self::remove_password] before calling this function.
-    pub fn set_password<R>(&mut self, rng: R, password: &Password) -> Result<()>
+    pub fn set_password<R>(&mut self, rng: &mut R, password: &Password) -> Result<()>
     where
-        R: rand::Rng + rand::CryptoRng,
+        R: rand::RngCore + rand::CryptoRng + ?Sized,
     {
         let s2k = crate::types::S2kParams::new_default(rng, self.version());
         Self::set_password_with_s2k(self, password, s2k)
@@ -391,9 +391,9 @@ impl SecretKey {
         Ok(())
     }
 
-    pub fn encrypt<R: rand::Rng + rand::CryptoRng>(
+    pub fn encrypt<R: rand::RngCore + rand::CryptoRng + ?Sized>(
         &self,
-        rng: R,
+        rng: &mut R,
         plain: &[u8],
         typ: EskType,
     ) -> Result<PkeskBytes> {
@@ -424,9 +424,9 @@ impl SecretSubkey {
     ///
     /// To change the password on a locked Secret Key packet, it needs to be unlocked
     /// using [Self::remove_password] before calling this function.
-    pub fn set_password<R>(&mut self, rng: R, password: &Password) -> Result<()>
+    pub fn set_password<R>(&mut self, rng: &mut R, password: &Password) -> Result<()>
     where
-        R: rand::Rng + rand::CryptoRng,
+        R: rand::RngCore + rand::CryptoRng + ?Sized,
     {
         let s2k = crate::types::S2kParams::new_default(rng, self.version());
         Self::set_password_with_s2k(self, password, s2k)
@@ -459,9 +459,9 @@ impl SecretSubkey {
         Ok(())
     }
 
-    pub fn encrypt<R: rand::Rng + rand::CryptoRng>(
+    pub fn encrypt<R: rand::RngCore + rand::CryptoRng + ?Sized>(
         &self,
-        rng: R,
+        rng: &mut R,
         plain: &[u8],
         typ: EskType,
     ) -> Result<PkeskBytes> {
@@ -584,8 +584,8 @@ fn create_signature(
     }
 }
 
-fn sign<R: CryptoRng + Rng, K, P>(
-    mut rng: R,
+fn sign<R: CryptoRng + RngCore + ?Sized, K, P>(
+    rng: &mut R,
     key: &K,
     key_pw: &Password,
     sig_typ: SignatureType,
@@ -599,7 +599,7 @@ where
 
     let mut config = match key.version() {
         KeyVersion::V4 => SignatureConfig::v4(sig_typ, key.algorithm(), key.hash_alg()),
-        KeyVersion::V6 => SignatureConfig::v6(&mut rng, sig_typ, key.algorithm(), key.hash_alg())?,
+        KeyVersion::V6 => SignatureConfig::v6(rng, sig_typ, key.algorithm(), key.hash_alg())?,
         v => unsupported_err!("unsupported key version: {:?}", v),
     };
 
