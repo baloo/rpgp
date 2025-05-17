@@ -62,7 +62,7 @@ pub enum PkeskBytes {
     MlKem1024X448 {
         /// Ephemeral X448public key (32 bytes).
         #[debug("{}", hex::encode(ecdh_ciphertext.as_bytes()))]
-        ecdh_ciphertext: cx448::x448::PublicKey,
+        ecdh_ciphertext: ed448_goldilocks::x448::PublicKey,
         #[debug("{}", hex::encode(&ml_kem_ciphertext[..]))]
         ml_kem_ciphertext: Box<[u8; 1568]>,
         /// Encrypted and wrapped session key.
@@ -166,7 +166,7 @@ impl PkeskBytes {
             PublicKeyAlgorithm::Unknown(_) => Ok(PkeskBytes::Other), // we don't know the format of this data
             #[cfg(feature = "draft-pqc")]
             PublicKeyAlgorithm::MlKem768X25519 => {
-                // <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-09.html#name-public-key-encrypted-sessio>
+                // <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-10.html#name-public-key-encrypted-sessio>
 
                 // A fixed-length octet string representing an ECDH ephemeral public key in the format associated with
                 // the curve as specified in Section 4.1.1.
@@ -203,13 +203,14 @@ impl PkeskBytes {
             }
             #[cfg(feature = "draft-pqc")]
             PublicKeyAlgorithm::MlKem1024X448 => {
-                // <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-09.html#name-public-key-encrypted-sessio>
+                // <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-10.html#name-public-key-encrypted-sessio>
 
                 // A fixed-length octet string representing an ECDH ephemeral public key in the format associated with
                 // the curve as specified in Section 4.1.1.
                 let ephemeral_public = i.read_array::<56>()?;
-                let ephemeral_public = cx448::x448::PublicKey::from_bytes(&ephemeral_public)
-                    .ok_or_else(|| crate::errors::format_err!("invalid x448 public key"))?;
+                let ephemeral_public =
+                    ed448_goldilocks::x448::PublicKey::from_bytes(&ephemeral_public)
+                        .ok_or_else(|| crate::errors::format_err!("invalid x448 public key"))?;
 
                 // A fixed-length octet string of the ML-KEM ciphertext, whose length depends on the algorithm ID as specified in Table 4.
                 let ml_kem_ciphertext = Box::new(i.read_array::<1568>()?);

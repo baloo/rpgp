@@ -1,13 +1,17 @@
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 use zeroize::ZeroizeOnDrop;
 
 use crate::{
     crypto::{hash::HashAlgorithm, Signer},
     errors::{bail, ensure, ensure_eq, format_err, Result},
+    ser::Serialize,
     types::{Ed448PublicParams, SignatureBytes},
 };
 
 const MIN_HASH_LEN_BITS: usize = 512;
+
+/// Size in bytes of the ED448 secret key.
+pub const KEY_LEN: usize = 57;
 
 /// Secret key for EdDSA with Curve448.
 #[derive(Clone, PartialEq, Eq, ZeroizeOnDrop, derive_more::Debug)]
@@ -16,7 +20,7 @@ pub struct SecretKey {
     /// The secret point.
     #[debug("..")]
     #[cfg_attr(test, proptest(strategy = "tests::key_gen()"))]
-    pub secret: cx448::SigningKey,
+    secret: ed448_goldilocks::SigningKey,
 }
 
 impl From<&SecretKey> for Ed448PublicParams {
@@ -29,15 +33,23 @@ impl From<&SecretKey> for Ed448PublicParams {
 
 impl SecretKey {
     /// Generate an Ed448 `SecretKey`.
-    pub fn generate<R: Rng + CryptoRng>(rng: R) -> Self {
-        let secret = cx448::SigningKey::generate(rng);
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R) -> Self {
+        let secret = ed448_goldilocks::SigningKey::generate(rng);
 
         SecretKey { secret }
     }
 
-    pub(crate) fn try_from_bytes(raw_secret: [u8; 57]) -> Result<Self> {
-        let secret = cx448::SigningKey::from(cx448::SecretKey::from_slice(&raw_secret));
+    pub fn try_from_bytes(raw: [u8; KEY_LEN]) -> Result<Self> {
+        let secret = ed448_goldilocks::SigningKey::from(
+            ed448_goldilocks::ScalarBytes::try_from(&raw[..]).expect("invariant violated"),
+        );
         Ok(Self { secret })
+    }
+
+    /// Returns the secret key in their raw byte level representation.
+    pub fn as_bytes(&self) -> &[u8; KEY_LEN] {
+        let r: &[u8] = self.secret.as_bytes().as_ref();
+        r.try_into().expect("known length")
     }
 }
 
@@ -64,9 +76,21 @@ impl Signer for SecretKey {
     }
 }
 
+impl Serialize for SecretKey {
+    fn to_writer<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
+        let x = self.as_bytes();
+        writer.write_all(x)?;
+        Ok(())
+    }
+
+    fn write_len(&self) -> usize {
+        KEY_LEN
+    }
+}
+
 /// Verify an EdDSA signature.
 pub fn verify(
-    key: &cx448::VerifyingKey,
+    key: &ed448_goldilocks::VerifyingKey,
     hash: HashAlgorithm,
     hashed: &[u8],
     sig_bytes: &[u8],
@@ -82,7 +106,7 @@ pub fn verify(
     let sig_bytes = sig_bytes
         .try_into()
         .map_err(|_| format_err!("invalid signature length"))?;
-    let sig = cx448::Signature::from_bytes(&sig_bytes)?;
+    let sig = ed448_goldilocks::Signature::from_bytes(&sig_bytes);
 
     Ok(key.verify_raw(&sig, hashed)?)
 }
@@ -92,8 +116,8 @@ mod tests {
     use proptest::prelude::*;
 
     prop_compose! {
-        pub fn key_gen()(bytes: [u8; 57]) -> cx448::SigningKey {
-            cx448::SigningKey::from(cx448::SecretKey::from_slice(&bytes))
+         pub fn key_gen()(bytes: [u8; 57]) -> ed448_goldilocks::SigningKey {
+            ed448_goldilocks::SigningKey::from(ed448_goldilocks::ScalarBytes::try_from(&bytes[..]).expect("invariant violation"))
         }
     }
 }

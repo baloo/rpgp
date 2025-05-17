@@ -1,12 +1,12 @@
 use std::cmp::PartialEq;
 
-use cx448::x448::{PublicKey, Secret};
+use ed448_goldilocks::x448::{PublicKey, Secret};
 use log::debug;
 use ml_kem::{
     kem::{Decapsulate, DecapsulationKey, Encapsulate, EncapsulationKey},
     KemCore, MlKem1024, MlKem1024Params,
 };
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 use sha3::{Digest, Sha3_256};
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
@@ -17,16 +17,21 @@ use crate::{
     types::MlKem1024X448PublicParams,
 };
 
+/// Size in bytes of the X448 secret key.
+pub const X448_KEY_LEN: usize = 56;
+/// Size in bytes of the ML KEM 1024 secret key.
+pub const ML_KEM1024_KEY_LEN: usize = 64;
+
 /// Secret key for ML KEM 1024 X448
 #[derive(Clone, derive_more::Debug)]
 pub struct SecretKey {
     #[debug("..")]
-    pub(crate) x448: Secret,
+    x448: Secret,
     #[debug("..")]
-    pub(crate) ml_kem: Box<DecapsulationKey<MlKem1024Params>>,
+    ml_kem: Box<DecapsulationKey<MlKem1024Params>>,
     /// Seed `d` and `z`
     #[debug("..")]
-    pub(crate) ml_kem_seed: (Zeroizing<[u8; 32]>, Zeroizing<[u8; 32]>),
+    ml_kem_seed: (Zeroizing<[u8; 32]>, Zeroizing<[u8; 32]>),
 }
 
 impl ZeroizeOnDrop for SecretKey {}
@@ -50,21 +55,22 @@ impl Eq for SecretKey {}
 
 impl Serialize for SecretKey {
     fn to_writer<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
-        writer.write_all(self.x448.as_bytes())?;
-        writer.write_all(&self.ml_kem_seed.0[..])?;
-        writer.write_all(&self.ml_kem_seed.1[..])?;
+        let (a, b, c) = self.as_bytes();
+        writer.write_all(a)?;
+        writer.write_all(b)?;
+        writer.write_all(c)?;
         Ok(())
     }
 
     fn write_len(&self) -> usize {
-        56 + 64
+        X448_KEY_LEN + ML_KEM1024_KEY_LEN
     }
 }
 
 impl SecretKey {
     /// Generate a `SecretKey`.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R) -> Self {
-        let x448 = Secret::new(&mut rng);
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R) -> Self {
+        let x448 = Secret::new(rng);
 
         let mut d = Zeroizing::new([0u8; 32]);
         let mut z = Zeroizing::new([0u8; 32]);
@@ -81,17 +87,32 @@ impl SecretKey {
         }
     }
 
-    pub(crate) fn try_from_parts(x: Secret, ml_kem: [u8; 64]) -> Result<Self> {
+    /// Create a key from the raw byte values
+    pub fn try_from_bytes(
+        x448: [u8; X448_KEY_LEN],
+        ml_kem: [u8; ML_KEM1024_KEY_LEN],
+    ) -> Result<Self> {
         let d: Zeroizing<[u8; 32]> = Zeroizing::new(ml_kem[..32].try_into().expect("fixed size"));
         let z: Zeroizing<[u8; 32]> = Zeroizing::new(ml_kem[32..].try_into().expect("fixed size"));
 
         let (ml_kem, _) = MlKem1024::generate_deterministic(&((*d).into()), &((*z).into()));
+
+        let x = Secret::from(x448);
 
         Ok(Self {
             x448: x,
             ml_kem: Box::new(ml_kem),
             ml_kem_seed: (d, z),
         })
+    }
+
+    /// Returns the individual secret keys in their raw byte level representation.
+    pub fn as_bytes(&self) -> (&[u8; X448_KEY_LEN], &[u8; 32], &[u8; 32]) {
+        (
+            self.x448.as_bytes(),
+            &self.ml_kem_seed.0,
+            &self.ml_kem_seed.1,
+        )
     }
 }
 
@@ -140,7 +161,7 @@ impl Decryptor for SecretKey {
     }
 }
 
-/// <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-09.html#name-x448-kem>
+/// <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-10.html#name-x448-kem>
 fn x448_kem_decaps(
     their_public: &PublicKey,
     ecdh_secret_key: &Secret,
@@ -166,7 +187,7 @@ fn ml_kem_1024_decaps(
 
 const DOM_SEP: &[u8] = b"OpenPGPCompositeKDFv1";
 
-/// <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-09.html#name-key-combiner>
+/// <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-10.html#name-key-combiner>
 fn multi_key_combine(
     ml_kem_key_share: &[u8; 32],
     ecdh_key_share: &[u8; 56],
@@ -193,14 +214,14 @@ fn multi_key_combine(
 
 /// ML KEM 1024 - X448 Encryption
 ///
-/// <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-09.html#name-encryption-procedure>
+/// <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-10.html#name-encryption-procedure>
 ///
 /// Returns
 /// - ecdh_ciphertext
 /// - ml_kem_ciphertext
 /// - encrypted data
-pub fn encrypt<R: CryptoRng + Rng>(
-    mut rng: R,
+pub fn encrypt<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     ecdh_public_key: &PublicKey,
     ml_kem_public_key: &EncapsulationKey<MlKem1024Params>,
     plain: &[u8],
@@ -214,9 +235,9 @@ pub fn encrypt<R: CryptoRng + Rng>(
     );
 
     // Compute (ecdhCipherText, ecdhKeyShare) := ECDH-KEM.Encaps(ecdhPublicKey)
-    let (ecdh_ciphertext, ecdh_key_share) = x448_kem_encaps(&mut rng, ecdh_public_key);
+    let (ecdh_ciphertext, ecdh_key_share) = x448_kem_encaps(rng, ecdh_public_key);
     // Compute (mlkemCipherText, mlkemKeyShare) := ML-KEM.Encaps(mlkemPublicKey)
-    let (ml_kem_ciphertext, ml_kem_key_share) = ml_kem_encaps(&mut rng, ml_kem_public_key);
+    let (ml_kem_ciphertext, ml_kem_key_share) = ml_kem_encaps(rng, ml_kem_public_key);
     // Compute KEK := multiKeyCombine(mlkemKeyShare, mlkemCipherText, mlkemPublicKey, ecdhKeyShare,
     //                        ecdhCipherText, ecdhPublicKey, algId, 256)
 
@@ -234,13 +255,13 @@ pub fn encrypt<R: CryptoRng + Rng>(
     Ok((ecdh_ciphertext, ml_kem_ciphertext, c))
 }
 
-/// <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-09.html#name-x448-kem>
-fn x448_kem_encaps<R: CryptoRng + Rng>(
-    mut rng: R,
+/// <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-10.html#name-x448-kem>
+fn x448_kem_encaps<R: CryptoRng + ?Sized>(
+    rng: &mut R,
     public_key: &PublicKey,
 ) -> (PublicKey, [u8; 56]) {
     // Generate an ephemeral key pair {v, V} via V = X448(v,U(P)) where v is a randomly generated octet string with a length of 56 octets
-    let our_secret = Secret::new(&mut rng);
+    let our_secret = Secret::new(rng);
 
     // Compute the shared coordinate X = X448(v, R) where R is the recipient's public key ecdhPublicKey
     let shared_secret = our_secret.as_diffie_hellman(public_key).expect("checked");
@@ -249,11 +270,11 @@ fn x448_kem_encaps<R: CryptoRng + Rng>(
     (ephemeral_public, *shared_secret.as_bytes())
 }
 
-fn ml_kem_encaps<R: CryptoRng + Rng>(
-    mut rng: R,
+fn ml_kem_encaps<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     public_key: &EncapsulationKey<MlKem1024Params>,
 ) -> (Box<[u8; 1568]>, [u8; 32]) {
-    let (ciphertext, share) = public_key.encapsulate(&mut rng).expect("infallible");
+    let (ciphertext, share) = public_key.encapsulate(rng).expect("infallible");
     (Box::new(ciphertext.into()), share.into())
 }
 
