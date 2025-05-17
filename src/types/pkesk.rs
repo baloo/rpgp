@@ -62,7 +62,7 @@ pub enum PkeskBytes {
     MlKem1024X448 {
         /// Ephemeral X448public key (32 bytes).
         #[debug("{}", hex::encode(ecdh_ciphertext.as_bytes()))]
-        ecdh_ciphertext: cx448::x448::PublicKey,
+        ecdh_ciphertext: x448::PublicKey,
         #[debug("{}", hex::encode(&ml_kem_ciphertext[..]))]
         ml_kem_ciphertext: Box<[u8; 1568]>,
         /// Encrypted and wrapped session key.
@@ -71,7 +71,10 @@ pub enum PkeskBytes {
         /// Set for v3 PKESK only (the sym_alg is not encrypted with the session key for X448)
         sym_alg: Option<SymmetricKeyAlgorithm>,
     },
-    Other,
+    Other {
+        #[debug("{}", hex::encode(key))]
+        key: Bytes,
+    },
 }
 
 impl PkeskBytes {
@@ -94,7 +97,10 @@ impl PkeskBytes {
             }
             PublicKeyAlgorithm::ECDSA
             | PublicKeyAlgorithm::DSA
-            | PublicKeyAlgorithm::DiffieHellman => Ok(PkeskBytes::Other),
+            | PublicKeyAlgorithm::DiffieHellman => {
+                let key = i.rest()?.freeze();
+                Ok(PkeskBytes::Other { key })
+            }
             PublicKeyAlgorithm::ECDH => {
                 let public_point = Mpi::try_from_reader(&mut i)?;
                 let session_key_len = i.read_u8()?;
@@ -163,10 +169,14 @@ impl PkeskBytes {
                     session_key,
                 })
             }
-            PublicKeyAlgorithm::Unknown(_) => Ok(PkeskBytes::Other), // we don't know the format of this data
+            PublicKeyAlgorithm::Unknown(_) => {
+                // we don't know the format of this data
+                let key = i.rest()?.freeze();
+                Ok(PkeskBytes::Other { key })
+            }
             #[cfg(feature = "draft-pqc")]
             PublicKeyAlgorithm::MlKem768X25519 => {
-                // <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-09.html#name-public-key-encrypted-sessio>
+                // <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-10.html#name-public-key-encrypted-sessio>
 
                 // A fixed-length octet string representing an ECDH ephemeral public key in the format associated with
                 // the curve as specified in Section 4.1.1.
@@ -203,12 +213,12 @@ impl PkeskBytes {
             }
             #[cfg(feature = "draft-pqc")]
             PublicKeyAlgorithm::MlKem1024X448 => {
-                // <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-09.html#name-public-key-encrypted-sessio>
+                // <https://www.ietf.org/archive/id/draft-ietf-openpgp-pqc-10.html#name-public-key-encrypted-sessio>
 
                 // A fixed-length octet string representing an ECDH ephemeral public key in the format associated with
                 // the curve as specified in Section 4.1.1.
                 let ephemeral_public = i.read_array::<56>()?;
-                let ephemeral_public = cx448::x448::PublicKey::from_bytes(&ephemeral_public)
+                let ephemeral_public = x448::PublicKey::from_bytes(&ephemeral_public)
                     .ok_or_else(|| crate::errors::format_err!("invalid x448 public key"))?;
 
                 // A fixed-length octet string of the ML-KEM ciphertext, whose length depends on the algorithm ID as specified in Table 4.
@@ -370,8 +380,8 @@ impl Serialize for PkeskBytes {
 
                 writer.write_all(session_key)?; // encrypted session key
             }
-            PkeskBytes::Other => {
-                // Nothing to do
+            PkeskBytes::Other { key } => {
+                writer.write_all(key)?;
             }
         }
         Ok(())
@@ -484,7 +494,9 @@ impl Serialize for PkeskBytes {
                 }
                 sum += session_key.len(); // encrypted session key
             }
-            PkeskBytes::Other => {}
+            PkeskBytes::Other { key } => {
+                sum += key.len();
+            }
         }
         sum
     }
