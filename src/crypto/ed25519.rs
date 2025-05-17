@@ -12,17 +12,23 @@
 //! This implicitly yields differing OpenPGP fingerprints, so the two OpenPGP key variants cannot
 //! be used interchangeably.
 
-use rand::{CryptoRng, Rng};
+use std::ops::Deref;
+
+use rand::{CryptoRng, RngCore};
 use signature::{Signer as _, Verifier};
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 use crate::{
     crypto::{hash::HashAlgorithm, Signer},
     errors::{bail, ensure, ensure_eq, Result},
+    ser::Serialize,
     types::{Ed25519PublicParams, EddsaLegacyPublicParams, Mpi, SignatureBytes},
 };
 
 const MIN_HASH_LEN_BITS: usize = 256;
+
+/// Size in bytes of the raw ED25519 secret key.
+pub const KEY_LEN: usize = 32;
 
 /// Specifies which OpenPGP framing (e.g. `Ed25519` vs. `EdDSALegacy`) is used, and also chooses
 /// between curve Ed25519 and Ed448 (TODO: not yet implemented)
@@ -47,7 +53,7 @@ pub struct SecretKey {
     /// The secret point.
     #[debug("..")]
     #[cfg_attr(test, proptest(strategy = "tests::key_gen()"))]
-    pub(crate) secret: ed25519_dalek::SigningKey,
+    secret: ed25519_dalek::SigningKey,
     #[zeroize(skip)]
     pub(crate) mode: Mode,
 }
@@ -70,12 +76,20 @@ impl From<&SecretKey> for EddsaLegacyPublicParams {
     }
 }
 
+impl Deref for SecretKey {
+    type Target = ed25519_dalek::SigningKey;
+
+    fn deref(&self) -> &Self::Target {
+        &self.secret
+    }
+}
+
 impl SecretKey {
     /// Generate an EdDSA `SecretKey`.
     ///
     /// This SecretKey type can be used to form either a `EddsaLegacyPublicParams` or a
     /// `Ed25519PublicParams`.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R, mode: Mode) -> Self {
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R, mode: Mode) -> Self {
         let mut bytes = Zeroizing::new([0u8; ed25519_dalek::SECRET_KEY_LENGTH]);
         rng.fill_bytes(&mut *bytes);
         let secret = ed25519_dalek::SigningKey::from_bytes(&bytes);
@@ -83,13 +97,19 @@ impl SecretKey {
         SecretKey { secret, mode }
     }
 
-    pub(crate) fn try_from_bytes(raw_secret: [u8; 32], mode: Mode) -> Result<Self> {
+    pub fn try_from_bytes(raw_secret: [u8; KEY_LEN], mode: Mode) -> Result<Self> {
         let secret = ed25519_dalek::SigningKey::from(raw_secret);
         Ok(Self { secret, mode })
     }
 
-    pub(crate) fn as_mpi(&self) -> Mpi {
-        Mpi::from_slice(&self.secret.to_bytes())
+    /// Returns the raw key
+    pub fn as_bytes(&self) -> &[u8; KEY_LEN] {
+        self.secret.as_bytes()
+    }
+
+    /// Returns the mode of this key.
+    pub fn mode(&self) -> Mode {
+        self.mode
     }
 }
 
@@ -123,6 +143,29 @@ impl Signer for SecretKey {
             Mode::Ed25519 => SignatureBytes::Native(bytes.to_vec().into()),
         };
         Ok(sig)
+    }
+}
+
+impl Serialize for SecretKey {
+    fn to_writer<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
+        match self.mode {
+            Mode::EdDSALegacy => {
+                Mpi::from_slice(&self.secret.as_bytes()[..]).to_writer(writer)?;
+            }
+            Mode::Ed25519 => {
+                let x = self.as_bytes();
+                writer.write_all(x)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn write_len(&self) -> usize {
+        match self.mode {
+            Mode::EdDSALegacy => Mpi::from_slice(self.secret.as_bytes()).write_len(),
+            Mode::Ed25519 => KEY_LEN,
+        }
     }
 }
 

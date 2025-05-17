@@ -1,7 +1,6 @@
-use std::ops::Deref;
-
+use cipher::array::Array;
 use log::debug;
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, RngCore};
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
@@ -12,6 +11,7 @@ use crate::{
         Decryptor,
     },
     errors::{ensure, ensure_eq, unsupported_err, Error, Result},
+    ser::Serialize,
     types::{pad_key, EcdhPublicParams, Mpi, PkeskBytes},
 };
 
@@ -21,28 +21,56 @@ const ANON_SENDER: [u8; 20] = [
     0x20, 0x20, 0x20, 0x20,
 ];
 
-/// Hack around `StaticSecret` not implementing debug.
+/// ECDH Curve25519 secret key
 #[derive(Clone, ZeroizeOnDrop, derive_more::Debug)]
-pub struct Curve25519Wrapper(#[debug("..")] StaticSecret);
+pub struct Curve25519(#[debug("..")] StaticSecret);
 
-impl From<StaticSecret> for Curve25519Wrapper {
+impl From<StaticSecret> for Curve25519 {
     fn from(value: StaticSecret) -> Self {
         Self(value)
     }
 }
 
-impl PartialEq for Curve25519Wrapper {
+impl PartialEq for Curve25519 {
     fn eq(&self, other: &Self) -> bool {
         self.0.as_bytes().eq(other.0.as_bytes())
     }
 }
 
-impl Eq for Curve25519Wrapper {}
+impl Eq for Curve25519 {}
 
-impl Deref for Curve25519Wrapper {
-    type Target = StaticSecret;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl Curve25519 {
+    pub fn generate<R: CryptoRng + ?Sized>(rng: &mut R) -> Self {
+        let mut secret_key_bytes = Zeroizing::new([0u8; ECCCurve::Curve25519.secret_key_length()]);
+        rng.fill_bytes(&mut *secret_key_bytes);
+
+        // Clamp, as `to_bytes` does not clamp.
+        let q_raw = curve25519_dalek::scalar::clamp_integer(*secret_key_bytes);
+        let secret = StaticSecret::from(q_raw);
+
+        Self(secret)
+    }
+
+    /// Reads the value in the reverse order (little endian), because..PGP screwed up
+    pub fn try_from_bytes_rev(bytes: &[u8]) -> Result<Self> {
+        let rev: Vec<u8> = bytes.iter().rev().copied().collect();
+        let secret_raw = pad_key::<32>(&rev)?;
+        let secret = x25519_dalek::StaticSecret::from(secret_raw);
+        Ok(Self(secret))
+    }
+
+    /// Returns the raw key in reverse order (little endian)
+    pub fn to_bytes_rev(&self) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (byte, o) in self.0.as_bytes().iter().rev().zip(out.iter_mut()) {
+            *o = *byte;
+        }
+        out
+    }
+
+    /// Returns the raw key in big endian
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_bytes()
     }
 }
 
@@ -51,13 +79,7 @@ impl Deref for Curve25519Wrapper {
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 pub enum SecretKey {
     /// ECDH with Curve25519
-    Curve25519 {
-        /// The secret point.
-        #[debug("..")]
-        #[cfg_attr(test, proptest(strategy = "tests::key_curve25519_gen()"))]
-        secret: Curve25519Wrapper,
-    },
-
+    Curve25519(Curve25519),
     /// ECDH with Nist P256
     P256 {
         /// The secret point.
@@ -89,14 +111,11 @@ impl From<&SecretKey> for EcdhPublicParams {
         let hash = curve.hash_algo().expect("known algo");
         let alg_sym = curve.sym_algo().expect("known algo");
         match value {
-            SecretKey::Curve25519 { secret } => {
-                let secret: &StaticSecret = secret;
-                Self::Curve25519 {
-                    p: PublicKey::from(secret),
-                    hash,
-                    alg_sym,
-                }
-            }
+            SecretKey::Curve25519(key) => Self::Curve25519 {
+                p: PublicKey::from(&key.0),
+                hash,
+                alg_sym,
+            },
             SecretKey::P256 { ref secret } => Self::P256 {
                 p: secret.public_key(),
                 hash,
@@ -118,31 +137,25 @@ impl From<&SecretKey> for EcdhPublicParams {
 
 impl SecretKey {
     /// Generate an ECDH KeyPair.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R, curve: &ECCCurve) -> Result<Self> {
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(
+        rng: &mut R,
+        curve: &ECCCurve,
+    ) -> Result<Self> {
         match curve {
             ECCCurve::Curve25519 => {
-                let mut secret_key_bytes =
-                    Zeroizing::new([0u8; ECCCurve::Curve25519.secret_key_length()]);
-                rng.fill_bytes(&mut *secret_key_bytes);
-
-                // Clamp, as `to_bytes` does not clamp.
-                let q_raw = curve25519_dalek::scalar::clamp_integer(*secret_key_bytes);
-                let secret = StaticSecret::from(q_raw);
-
-                Ok(SecretKey::Curve25519 {
-                    secret: Curve25519Wrapper(secret),
-                })
+                let key = Curve25519::generate(rng);
+                Ok(Self::Curve25519(key))
             }
             ECCCurve::P256 => {
-                let secret = p256::SecretKey::random(&mut rng);
+                let secret = p256::SecretKey::random(rng);
                 Ok(SecretKey::P256 { secret })
             }
             ECCCurve::P384 => {
-                let secret = p384::SecretKey::random(&mut rng);
+                let secret = p384::SecretKey::random(rng);
                 Ok(SecretKey::P384 { secret })
             }
             ECCCurve::P521 => {
-                let secret = p521::SecretKey::random(&mut rng);
+                let secret = p521::SecretKey::random(rng);
                 Ok(SecretKey::P521 { secret })
             }
             _ => unsupported_err!("curve {:?} for ECDH", curve),
@@ -152,14 +165,8 @@ impl SecretKey {
     pub(crate) fn try_from_mpi(pub_params: &EcdhPublicParams, d: Mpi) -> Result<Self> {
         match pub_params {
             EcdhPublicParams::Curve25519 { .. } => {
-                const SIZE: usize = ECCCurve::Curve25519.secret_key_length();
-                let rev: Vec<u8> = d.as_ref().iter().rev().copied().collect();
-                let secret_raw = pad_key::<SIZE>(&rev)?;
-                let secret = x25519_dalek::StaticSecret::from(secret_raw);
-
-                Ok(SecretKey::Curve25519 {
-                    secret: secret.into(),
-                })
+                let key = Curve25519::try_from_bytes_rev(d.as_ref())?;
+                Ok(SecretKey::Curve25519(key))
             }
             EcdhPublicParams::P256 { .. } => {
                 const SIZE: usize = ECCCurve::P256.secret_key_length();
@@ -178,11 +185,8 @@ impl SecretKey {
             EcdhPublicParams::P521 { .. } => {
                 const SIZE: usize = ECCCurve::P521.secret_key_length();
                 let raw = pad_key::<SIZE>(d.as_ref())?;
-                let arr =
-                    generic_array::GenericArray::<u8, generic_array::typenum::U66>::from_slice(
-                        &raw[..],
-                    );
-                let secret = elliptic_curve::SecretKey::<p521::NistP521>::from_bytes(arr)?;
+                let arr = Array::<u8, cipher::typenum::U66>::from(raw);
+                let secret = elliptic_curve::SecretKey::<p521::NistP521>::from_bytes(&arr)?;
 
                 Ok(SecretKey::P521 { secret })
             }
@@ -197,16 +201,14 @@ impl SecretKey {
         }
     }
 
-    pub(crate) fn as_mpi(&self) -> Mpi {
+    fn to_mpi(&self) -> Mpi {
         match self {
-            Self::Curve25519 { secret, .. } => {
-                let bytes = secret.to_bytes();
+            Self::Curve25519(key) => {
+                let bytes = key.to_bytes_rev();
 
                 // create scalar and reverse to little endian
                 // https://www.rfc-editor.org/rfc/rfc9580.html#name-curve25519legacy-ecdh-secre
-                let reversed = bytes.iter().rev().copied().collect::<Vec<u8>>();
-
-                Mpi::from_raw(reversed.into())
+                Mpi::from_raw(bytes.to_vec().into())
             }
             Self::P256 { secret, .. } => Mpi::from_slice(&secret.to_bytes()),
             Self::P384 { secret, .. } => Mpi::from_slice(&secret.to_bytes()),
@@ -214,13 +216,35 @@ impl SecretKey {
         }
     }
 
-    fn curve(&self) -> ECCCurve {
+    pub fn curve(&self) -> ECCCurve {
         match self {
             Self::Curve25519 { .. } => ECCCurve::Curve25519,
             Self::P256 { .. } => ECCCurve::P256,
             Self::P384 { .. } => ECCCurve::P384,
             Self::P521 { .. } => ECCCurve::P521,
         }
+    }
+
+    /// Returns the secret material as raw bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Curve25519(key) => key.as_bytes().to_vec(),
+            Self::P256 { secret, .. } => secret.to_bytes().to_vec(),
+            Self::P384 { secret, .. } => secret.to_bytes().to_vec(),
+            Self::P521 { secret, .. } => secret.to_bytes().to_vec(),
+        }
+    }
+}
+
+impl Serialize for SecretKey {
+    fn to_writer<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
+        let x = self.to_mpi();
+        x.to_writer(writer)
+    }
+
+    fn write_len(&self) -> usize {
+        let x = self.to_mpi();
+        x.write_len()
     }
 }
 
@@ -250,7 +274,7 @@ impl Decryptor for SecretKey {
         let hash = data.hash;
 
         let shared_secret = match self {
-            SecretKey::Curve25519 { secret, .. } => {
+            SecretKey::Curve25519(key) => {
                 ensure_eq!(data.public_point.len(), 33, "invalid public point"); // prefix "0x40" + 32 bytes = 33 bytes
 
                 let their_public = {
@@ -265,7 +289,7 @@ impl Decryptor for SecretKey {
                 };
 
                 // derive shared secret
-                let shared_secret = secret.diffie_hellman(&their_public);
+                let shared_secret = key.0.diffie_hellman(&their_public);
 
                 shared_secret.to_bytes().to_vec()
             }
@@ -460,8 +484,8 @@ fn pad(plain: &[u8]) -> Vec<u8> {
 }
 
 /// ECDH encryption.
-pub fn encrypt<R: CryptoRng + Rng>(
-    mut rng: R,
+pub fn encrypt<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     params: &EcdhPublicParams,
     fingerprint: &[u8],
     plain: &[u8],
@@ -546,8 +570,8 @@ pub fn encrypt<R: CryptoRng + Rng>(
 
 /// Derive a shared secret in encryption, for a Rust Crypto curve.
 /// Returns a pair of `(our_public key, shared_secret)`.
-fn derive_shared_secret_encryption<C, R: CryptoRng + Rng>(
-    mut rng: R,
+fn derive_shared_secret_encryption<C, R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     their_public: &elliptic_curve::PublicKey<C>,
 ) -> Result<(Vec<u8>, Vec<u8>)>
 where
@@ -556,7 +580,7 @@ where
     elliptic_curve::AffinePoint<C>:
         elliptic_curve::sec1::FromEncodedPoint<C> + elliptic_curve::sec1::ToEncodedPoint<C>,
 {
-    let our_secret = elliptic_curve::ecdh::EphemeralSecret::<C>::random(&mut rng);
+    let our_secret = elliptic_curve::ecdh::EphemeralSecret::<C>::random(rng);
 
     // derive shared secret
     let shared_secret = our_secret.diffie_hellman(their_public);
@@ -686,10 +710,17 @@ mod tests {
         }
     }
 
-    prop_compose! {
-        pub fn key_curve25519_gen()(bytes: [u8; 32]) -> Curve25519Wrapper {
-            let q_raw = curve25519_dalek::scalar::clamp_integer(bytes);
-            Curve25519Wrapper(StaticSecret::from(q_raw))
+    impl Arbitrary for Curve25519 {
+        type Parameters = ();
+        type Strategy = BoxedStrategy<Self>;
+
+        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+            any::<u64>()
+                .prop_map(|seed| {
+                    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+                    Curve25519::generate(&mut rng)
+                })
+                .boxed()
         }
     }
 }

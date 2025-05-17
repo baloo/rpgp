@@ -2,7 +2,7 @@ use std::cmp::PartialEq;
 
 use hkdf::Hkdf;
 use log::debug;
-use rand::{CryptoRng, Rng};
+use rand::{rand_core::RngCore, CryptoRng};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -10,14 +10,17 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use crate::{
     crypto::{aes_kw, Decryptor},
     errors::{ensure, Result},
+    ser::Serialize,
     types::X25519PublicParams,
 };
+
+pub const KEY_LEN: usize = 32;
 
 /// Secret key for X25519
 #[derive(Clone, derive_more::Debug, Zeroize, ZeroizeOnDrop)]
 pub struct SecretKey {
     #[debug("..")]
-    pub(crate) secret: StaticSecret,
+    secret: StaticSecret,
 }
 
 impl From<&SecretKey> for X25519PublicParams {
@@ -38,7 +41,7 @@ impl Eq for SecretKey {}
 
 impl SecretKey {
     /// Generate an X25519 `SecretKey`.
-    pub fn generate<R: Rng + CryptoRng>(mut rng: R) -> Self {
+    pub fn generate<R: RngCore + CryptoRng + ?Sized>(rng: &mut R) -> Self {
         let mut secret_key_bytes = Zeroizing::new([0u8; 32]);
         rng.fill_bytes(&mut *secret_key_bytes);
 
@@ -46,9 +49,25 @@ impl SecretKey {
         SecretKey { secret }
     }
 
-    pub(crate) fn try_from_array(secret: [u8; 32]) -> Result<Self> {
+    pub fn try_from_bytes(secret: [u8; KEY_LEN]) -> Result<Self> {
         let secret = x25519_dalek::StaticSecret::from(secret);
         Ok(Self { secret })
+    }
+
+    pub fn as_bytes(&self) -> &[u8; KEY_LEN] {
+        self.secret.as_bytes()
+    }
+}
+
+impl Serialize for SecretKey {
+    fn to_writer<W: std::io::Write>(&self, writer: &mut W) -> Result<()> {
+        let x = self.as_bytes();
+        writer.write_all(x)?;
+        Ok(())
+    }
+
+    fn write_len(&self) -> usize {
+        KEY_LEN
     }
 }
 
@@ -141,8 +160,8 @@ pub fn hkdf(
 /// X25519 encryption.
 ///
 /// Returns (ephemeral, encrypted session key)
-pub fn encrypt<R: CryptoRng + Rng>(
-    mut rng: R,
+pub fn encrypt<R: CryptoRng + RngCore + ?Sized>(
+    rng: &mut R,
     recipient_public: &x25519_dalek::PublicKey,
     plain: &[u8],
 ) -> Result<([u8; 32], Vec<u8>)> {
