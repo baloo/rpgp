@@ -51,8 +51,7 @@ impl SecretKey {
         q: Mpi,
         _u: Mpi,
     ) -> Result<Self> {
-        let n = pub_params.key.n().clone();
-        let n = dsa::Odd::new(n.get()).unwrap();
+        let n = pub_params.key.n().clone().get();
         let secret_key = RsaPrivateKey::from_components(
             n,
             pub_params.key.e().clone(),
