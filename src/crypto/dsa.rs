@@ -56,7 +56,7 @@ impl SecretKey {
 
     /// Create from the given MPI and matching public params.
     pub(crate) fn try_from_mpi(pub_params: &DsaPublicParams, x: Mpi) -> Result<Self> {
-        let secret = dsa::SigningKey::from_components(pub_params.key.clone(), x.try_into()?)?;
+        let secret = dsa::SigningKey::from_components(pub_params.key.clone(), x.into())?;
         Ok(Self { key: secret })
     }
 
@@ -113,14 +113,9 @@ impl Signer for SecretKey {
 }
 
 /// Verify a DSA signature.
-pub fn verify(
-    params: &DsaPublicParams,
-    hashed: &[u8],
-    r: dsa::NonZero<BoxedUint>,
-    s: dsa::NonZero<BoxedUint>,
-) -> Result<()> {
+pub fn verify(params: &DsaPublicParams, hashed: &[u8], r: BoxedUint, s: BoxedUint) -> Result<()> {
     let verifying_key = &params.key;
-    let signature = Signature::from_components(r, s);
+    let signature = Signature::from_components(r, s).ok_or_else(signature::Error::new)?;
     verifying_key.verify_prehash(hashed, &signature)?;
 
     Ok(())
