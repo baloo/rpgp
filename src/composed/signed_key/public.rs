@@ -1,7 +1,7 @@
 use std::io;
 
 use log::warn;
-use rand::{CryptoRng, Rng};
+use rand::CryptoRng;
 
 use crate::{
     armor,
@@ -146,9 +146,9 @@ impl SignedPublicKey {
 }
 
 impl EncryptionKey for SignedPublicKey {
-    fn encrypt<R: Rng + CryptoRng>(
+    fn encrypt<R: CryptoRng + ?Sized>(
         &self,
-        rng: R,
+        rng: &mut R,
         plain: &[u8],
         typ: EskType,
     ) -> Result<PkeskBytes> {
@@ -187,7 +187,7 @@ impl KeyDetails for SignedPublicKey {
 }
 
 impl Imprint for SignedPublicKey {
-    fn imprint<D: KnownDigest>(&self) -> Result<generic_array::GenericArray<u8, D::OutputSize>> {
+    fn imprint<D: KnownDigest>(&self) -> Result<hybrid_array::Array<u8, D::OutputSize>> {
         self.primary_key.imprint::<D>()
     }
 }
@@ -221,7 +221,7 @@ impl Serialize for SignedPublicKey {
 
 impl SignedPublicKey {
     pub fn from_signer<R, K>(
-        mut rng: R,
+        rng: &mut R,
         sec_key: &K,
         primary_key: packet::PublicKey,
         details: composed::KeyDetails,
@@ -229,10 +229,10 @@ impl SignedPublicKey {
         public_subkeys: Vec<SignedPublicSubKey>,
     ) -> Result<Self>
     where
-        R: CryptoRng + Rng,
+        R: CryptoRng + ?Sized,
         K: SigningKey,
     {
-        let details = details.sign(&mut rng, sec_key, &primary_key, key_pw)?;
+        let details = details.sign(rng, sec_key, &primary_key, key_pw)?;
         Ok(Self {
             primary_key,
             details,
@@ -291,9 +291,9 @@ impl SignedPublicSubKey {
 }
 
 impl EncryptionKey for SignedPublicSubKey {
-    fn encrypt<R: Rng + CryptoRng>(
+    fn encrypt<R: CryptoRng + ?Sized>(
         &self,
-        rng: R,
+        rng: &mut R,
         plain: &[u8],
         typ: EskType,
     ) -> Result<PkeskBytes> {
@@ -302,7 +302,7 @@ impl EncryptionKey for SignedPublicSubKey {
 }
 
 impl Imprint for SignedPublicSubKey {
-    fn imprint<D: KnownDigest>(&self) -> Result<generic_array::GenericArray<u8, D::OutputSize>> {
+    fn imprint<D: KnownDigest>(&self) -> Result<hybrid_array::Array<u8, D::OutputSize>> {
         self.key.imprint::<D>()
     }
 }

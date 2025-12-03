@@ -571,7 +571,7 @@ fn ecdsa_signed_public_key() {
     );
 
     let signed_public_key = SignedPublicKey::from_signer(
-        rand::thread_rng(),
+        &mut rand::rng(),
         &signer,
         signer.public_key().clone(),
         details,
